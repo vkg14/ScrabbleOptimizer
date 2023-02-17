@@ -85,17 +85,57 @@ class Square:
         return f"Square({self.typ}, {self.value or str()})"
 
 
-class Board:
-    def __init__(self, lexicon_file='lexicon/scrabble_word_list.pickle'):
+@dataclass
+class ScrabbleBoard:
+    board: List[List[Square]] = field(default_factory=list)
+    # TODO: keep track of words played
+    words_played: Set[str] = field(default_factory=set)
+    transposed: bool = False
+
+    def __post_init__(self):
         self.board = [[Square() for i in range(15)] for j in range(15)]
         self._add_premium_squares()
-        # TODO: keep track of words played
-        self.words_played = set()
+
+    @staticmethod
+    def in_bounds(r, c):
+        return 0 <= r < 15 and 0 <= c < 15
+
+    def _add_premium_squares(self):
+        # Adds all premium squares that influence the word's score.
+        premium_mapping = {
+            SquareType.TWS: [(0, 0), (7, 0), (14, 0), (0, 7), (14, 7), (0, 14), (7, 14), (14, 14)],
+            SquareType.DWS: [
+                (1, 1), (2, 2), (3, 3), (4, 4), (1, 13), (2, 12), (3, 11), (4, 10), (13, 1), (12, 2), (11, 3), (10, 4),
+                (13, 13), (12, 12), (11, 11), (10, 10)
+            ],
+            SquareType.TLS: [
+                (1, 5), (1, 9), (5, 1), (5, 5), (5, 9), (5, 13), (9, 1), (9, 5), (9, 9), (9, 13), (13, 5), (13, 9)
+            ],
+            SquareType.DLS: [
+                (0, 3), (0, 11), (2, 6), (2, 8), (3, 0), (3, 7), (3, 14), (6, 2), (6, 6), (6, 8), (6, 12), (7, 3),
+                (7, 11), (8, 2), (8, 6), (8, 8), (8, 12), (11, 0), (11, 7), (11, 14), (12, 6), (12, 8), (14, 3),
+                (14, 11)
+            ]
+        }
+        for typ, coords in premium_mapping.items():
+            for r, c in coords:
+                self.board[r][c].typ = typ
+
+    def transpose(self):
+        # Could also transpose with [list(x) for x in zip(*a)]
+        self.board = np.array(self.board).T.tolist()
+        self.transposed = not self.transposed
+
+    def __getitem__(self, idx: int) -> List[Square]:
+        return self.board[idx]
+
+
+class Solver:
+    def __init__(self, lexicon_file='lexicon/scrabble_word_list.pickle'):
+        self.board = ScrabbleBoard()
 
         with open(lexicon_file, 'rb') as f:
             self.dict_trie: TrieNode = pickle.load(f)
-
-        self.is_transposed = False
 
         # Best word tracking
         self.best_word = ""
@@ -103,13 +143,13 @@ class Board:
         self.best_score = 0
         self.used_transpose = False
 
-    @staticmethod
-    def _in_bounds(r, c):
-        return 0 <= r < 15 and 0 <= c < 15
-
     def _is_potential_anchor(self, r, c):
+        """
+        Every move (except the very first) requires an anchor, a cell which is currently vacant but adjacent to
+        at least one occupied cell.  We build potential moves around anchor cells.
+        """
         adjacent_squares = [self.board[r2][c2] for r2, c2 in [(r - 1, c), (r + 1, c), (r, c - 1), (r, c + 1)] if
-                            self._in_bounds(r2, c2)]
+                            self.board.in_bounds(r2, c2)]
         # At least one of the adjacent squares must have a letter to tether to
         return self.board[r][c].vacant() and any(not square.vacant() for square in adjacent_squares)
 
@@ -136,7 +176,7 @@ class Board:
             self.best_word = word
             self.start_coords = coords
             self.best_score = score
-            self.used_transpose = self.is_transposed
+            self.used_transpose = self.board.transposed
         return score
 
     def extend_right(
@@ -147,7 +187,7 @@ class Board:
             anchor_placed: bool = True
     ):
         r, c = coords
-        if not self._in_bounds(r, c) or not tiles:
+        if not self.board.in_bounds(r, c) or not tiles:
             # Since we are out of bounds / no tiles, no further exploration can happen
             if trie_node.is_valid_word and anchor_placed:
                 self.score_word(partial_word, (r, c - len(partial_word)))
@@ -160,7 +200,7 @@ class Board:
             for letter, child_node in trie_node.children.items():
                 # We always form words horizontally but change the orientation of the board repr beforehand.
                 cross_checks = square.cross_checks_vertical \
-                    if not self.is_transposed else square.cross_checks_horizontal
+                    if not self.board.transposed else square.cross_checks_horizontal
                 if letter not in tiles or letter not in cross_checks:
                     continue
                 tiles.remove(letter)
@@ -207,11 +247,6 @@ class Board:
                     self.left_part(prefix, start_node, tiles, left_of_anchor, (r, c))
                 left_of_anchor = 0
 
-    def _transpose(self):
-        # Could also transpose with [list(x) for x in zip(*a)]
-        self.board = np.array(self.board).T.tolist()
-        self.is_transposed = not self.is_transposed
-
     def find_best_move(self, tiles: List[str]):
         self._clear_turn_state()
         if self.board[7][7].vacant():
@@ -220,24 +255,24 @@ class Board:
             return
         self._best_move_helper(tiles)
         # Solve for vertically formed words using transpose
-        self._transpose()
+        self.board.transpose()
         self._best_move_helper(tiles)
         # Undo transpose
-        self._transpose()
+        self.board.transpose()
 
     def _clear_turn_state(self):
         self.best_score = 0
         self.best_word = ""
         self.start_coords = (-1, -1)
         self.used_transpose = False
-        if self.is_transposed:
-            self._transpose()
+        if self.board.transposed:
+            self.board.transpose()
 
     def _find_first_vacant_in_column(self, r: int, c: int, direction: Callable):
         r = direction(r)
-        while self._in_bounds(r, c) and not self.board[r][c].vacant():
+        while self.board.in_bounds(r, c) and not self.board[r][c].vacant():
             r = direction(r)
-        if self._in_bounds(r, c):
+        if self.board.in_bounds(r, c):
             return r, c
         return None
 
@@ -251,8 +286,8 @@ class Board:
         r, c = coords
         upper = r
         cross_check = self.board[r][c].cross_checks_vertical \
-            if not self.is_transposed else self.board[r][c].cross_checks_horizontal
-        while self._in_bounds(upper - 1, c) and not self.board[upper - 1][c].vacant():
+            if not self.board.transposed else self.board[r][c].cross_checks_horizontal
+        while self.board.in_bounds(upper - 1, c) and not self.board[upper - 1][c].vacant():
             upper -= 1
         prefix_node = self.dict_trie
         while upper < r:
@@ -265,8 +300,8 @@ class Board:
                 removal_set.add(candidate)
                 continue
             suffix_node = prefix_node.children[candidate]
-            lower = r+1
-            while self._in_bounds(lower, c) and not self.board[lower][c].vacant():
+            lower = r + 1
+            while self.board.in_bounds(lower, c) and not self.board[lower][c].vacant():
                 sq = self.board[lower][c]
                 if sq.value not in suffix_node.children:
                     suffix_node = None
@@ -285,8 +320,8 @@ class Board:
         r, c = coords
         left = c
         cross_check = self.board[r][c].cross_checks_horizontal \
-            if not self.is_transposed else self.board[r][c].cross_checks_vertical
-        while self._in_bounds(r, left - 1) and not self.board[r][left - 1].vacant():
+            if not self.board.transposed else self.board[r][c].cross_checks_vertical
+        while self.board.in_bounds(r, left - 1) and not self.board[r][left - 1].vacant():
             left -= 1
         prefix_node = self.dict_trie
         while left < c:
@@ -299,8 +334,8 @@ class Board:
                 removal_set.add(candidate)
                 continue
             suffix_node = prefix_node.children[candidate]
-            right = c+1
-            while self._in_bounds(r, right) and not self.board[r][right].vacant():
+            right = c + 1
+            while self.board.in_bounds(r, right) and not self.board[r][right].vacant():
                 sq = self.board[r][right]
                 if sq.value not in suffix_node.children:
                     suffix_node = None
@@ -316,7 +351,7 @@ class Board:
         if not self.best_word or self.best_score <= 0:
             return
         if self.used_transpose:
-            self._transpose()
+            self.board.transpose()
         r, c = self.start_coords
         v_cross_check = []
         for i, ch in enumerate(self.best_word):
@@ -337,32 +372,11 @@ class Board:
             self._update_v_cross_check(cc)
 
         # The only horizontal cross-check candidates are on either side of the end of the word
-        h_candidates = [(r, c-1), (r, c+len(self.best_word))]
+        h_candidates = [(r, c - 1), (r, c + len(self.best_word))]
         for cc in h_candidates:
-            if self._in_bounds(*cc):
+            if self.board.in_bounds(*cc):
                 self._update_h_cross_check(cc)
 
         # TODO: consider returning the used tiles to the caller to replenish tiles
         # Clear turn state once move is applied
         self._clear_turn_state()
-
-    def _add_premium_squares(self):
-        # Adds all the premium squares that influence the word's score.
-        premium_mapping = {
-            SquareType.TWS: [(0, 0), (7, 0), (14, 0), (0, 7), (14, 7), (0, 14), (7, 14), (14, 14)],
-            SquareType.DWS: [
-                (1, 1), (2, 2), (3, 3), (4, 4), (1, 13), (2, 12), (3, 11), (4, 10), (13, 1), (12, 2), (11, 3), (10, 4),
-                (13, 13), (12, 12), (11, 11), (10, 10)
-            ],
-            SquareType.TLS: [
-                (1, 5), (1, 9), (5, 1), (5, 5), (5, 9), (5, 13), (9, 1), (9, 5), (9, 9), (9, 13), (13, 5), (13, 9)
-            ],
-            SquareType.DLS: [
-                (0, 3), (0, 11), (2, 6), (2, 8), (3, 0), (3, 7), (3, 14), (6, 2), (6, 6), (6, 8), (6, 12), (7, 3),
-                (7, 11), (8, 2), (8, 6), (8, 8), (8, 12), (11, 0), (11, 7), (11, 14), (12, 6), (12, 8), (14, 3),
-                (14, 11)
-            ]
-        }
-        for typ, coords in premium_mapping.items():
-            for r, c in coords:
-                self.board[r][c].typ = typ

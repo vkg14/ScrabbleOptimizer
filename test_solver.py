@@ -1,16 +1,16 @@
 import pytest
 
-from board import Board
+from solver import Solver
 from trie import construct_scrabble_lexicon
 
 
 @pytest.fixture(scope="session", autouse=True)
-def construct_lexicon(request):
+def construct_lexicon():
     construct_scrabble_lexicon()
 
 
-def test_initial_move():
-    b = Board()
+def test_basic():
+    b = Solver()
     tiles = [ch for ch in 'MKJZUSI']
     b.find_best_move(tiles)
     expected_word = 'MUZJIKS'
@@ -29,3 +29,18 @@ def test_initial_move():
         f"Expected board[7][0] to have no horizontal cc candidates."
     assert len(b.board[7][0].cross_checks_vertical) == 26, \
         f"Expected board[7][0] to have all vertical cc candidates."
+    assert b.board[6][1].cross_checks_vertical == {'A', 'E', 'H', 'M', 'O', 'U'}, \
+        "These are the only letters which could form a 2-letter word with M (only adjacent filled-space vertically)."
+
+    tiles = [ch for ch in 'AX']
+    b.find_best_move(tiles)
+    expected_word = 'MAX'
+
+    assert b.best_word == expected_word, f"Found incorrect word {b.best_word}"
+    assert b.best_score == 28
+    assert b.used_transpose, f"Should use transpose to construct second move."
+    assert b.start_coords == (1, 7)  # Inverted because transpose
+
+    b.apply_best_move()
+    for i in range(len(expected_word)):
+        assert b.board[7 + i][1].value == expected_word[i]
