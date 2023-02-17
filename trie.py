@@ -2,6 +2,9 @@ import pickle
 from dataclasses import dataclass, field
 from typing import Dict, Optional
 
+LEXICON_TXT_FILE = 'lexicon/scrabble_word_list.txt'
+PICKLE_FILE = 'lexicon/scrabble_word_list.pickle'
+
 
 @dataclass
 class TrieNode:
@@ -42,13 +45,15 @@ class TrieNode:
         return 1 + sum(child.count_nodes() for _, child in self.children.items())
 
 
-if __name__ == '__main__':
-    file = 'lexicon/scrabble_word_list.txt'
-    trie = TrieNode.construct_trie(file)
+def construct_scrabble_lexicon(target: str = PICKLE_FILE):
+    trie = TrieNode.construct_trie(LEXICON_TXT_FILE)
     print(trie.count_nodes())
-    pickle_file = 'lexicon/scrabble_word_list.pickle'
-    with open(pickle_file, 'wb') as f:
+    with open(target, 'wb') as f:
         pickle.dump(trie, f)
-    with open(pickle_file, 'rb') as f:
+    with open(target, 'rb') as f:
         print(pickle.load(f).count_nodes())
+
+
+if __name__ == '__main__':
+    construct_scrabble_lexicon()
 
