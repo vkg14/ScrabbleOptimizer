@@ -5,6 +5,7 @@ from enum import auto
 from operator import add
 from typing import Set, Optional, Tuple, List, Callable
 
+import numpy as np
 from strenum import StrEnum
 from trie import TrieNode
 
@@ -64,11 +65,13 @@ class SquareType(StrEnum):
 @dataclass
 class Square:
     value: Optional[str] = None
-    cross_checks: Set[str] = field(default_factory=set)
+    cross_checks_vertical: Set[str] = field(default_factory=set)
+    cross_checks_horizontal: Set[str] = field(default_factory=set)
     typ: SquareType = SquareType.NORMAL
 
     def __post_init__(self):
-        self.cross_checks = {letter for letter in LETTER_VALUES if letter != '#'}
+        self.cross_checks_vertical = {letter for letter in LETTER_VALUES if letter != '#'}
+        self.cross_checks_horizontal = {letter for letter in LETTER_VALUES if letter != '#'}
 
     def vacant(self):
         return not self.value
@@ -85,16 +88,19 @@ class Square:
 class Board:
     def __init__(self, lexicon_file='lexicon/scrabble_word_list.pickle'):
         self.board = [[Square() for i in range(15)] for j in range(15)]
-        self.add_premium_squares()
+        self._add_premium_squares()
         self.words_played = set()
 
         with open(lexicon_file, 'rb') as f:
             self.dict_trie: TrieNode = pickle.load(f)
 
-        # Turn state
+        self.is_transposed = False
+
+        # Best word tracking
         self.best_word = ""
         self.start_coords = (-1, -1)
         self.best_score = 0
+        self.used_transpose = False
 
     @staticmethod
     def _in_bounds(r, c):
@@ -129,6 +135,7 @@ class Board:
             self.best_word = word
             self.start_coords = coords
             self.best_score = score
+            self.used_transpose = self.is_transposed
         return score
 
     def extend_right(
@@ -145,12 +152,13 @@ class Board:
                 self.score_word(partial_word, (r, c - len(partial_word)))
             return
         square = self.board[r][c]
-        if square.vacant:
+        if square.vacant():
             if trie_node.is_valid_word and anchor_placed:
                 self.score_word(partial_word, (r, c - len(partial_word)))
                 pass
             for letter, child_node in trie_node.children.items():
-                if letter not in tiles or letter not in square.cross_checks:
+                cross_checks = square.cross_checks_horizontal if self.is_transposed else square.cross_checks_vertical
+                if letter not in tiles or letter not in cross_checks:
                     continue
                 tiles.remove(letter)
                 self.extend_right(partial_word + letter, child_node, tiles, (r, c + 1))
@@ -173,15 +181,8 @@ class Board:
                 self.left_part(partial_word + letter, child_node, tiles, limit - 1, anchor)
                 tiles.append(letter)
 
-    def find_best_move(self, tiles: List[str]):
-        self.best_score = 0
-        self.best_word = ""
-        self.start_coords = (-1, -1)
-        if self.board[7][7].vacant():
-            # start of game
-            self.left_part("", self.dict_trie, tiles, 6, (7, 7))
-            return
-        # middle of game, solve using anchors
+    def _best_move_helper(self, tiles: List[str]):
+        # When in the middle of game, solve using anchors
         for r in range(15):
             # We solve the best for each row
             # We must keep track of the number of vacant / unconnected squares left of anchor
@@ -203,10 +204,31 @@ class Board:
                     self.left_part(prefix, start_node, tiles, left_of_anchor, (r, c))
                 left_of_anchor = 0
 
+    def _transpose(self):
+        # Could also transpose with [list(x) for x in zip(*a)]
+        self.board = np.array(self.board).T.tolist()
+        self.is_transposed = not self.is_transposed
+
+    def find_best_move(self, tiles: List[str]):
+        self._clear_turn_state()
+        if self.board[7][7].vacant():
+            # start of game, apply best move horizontally since symmetric
+            self.left_part("", self.dict_trie, tiles, 6, (7, 7))
+            return
+        self._best_move_helper(tiles)
+        # Solve for vertically formed words using transpose
+        self._transpose()
+        self._best_move_helper(tiles)
+        # Undo transpose
+        self._transpose()
+
     def _clear_turn_state(self):
         self.best_score = 0
         self.best_word = ""
         self.start_coords = (-1, -1)
+        self.used_transpose = False
+        if self.is_transposed:
+            self._transpose()
 
     def _find_first_vacant_in_column(self, r: int, c: int, direction: Callable):
         r = direction(r)
@@ -216,7 +238,7 @@ class Board:
             return r, c
         return None
 
-    def _update_cross_check(self, coords: Tuple[int, int]):
+    def _update_v_cross_check(self, coords: Tuple[int, int]):
         """
         This method can be broken down into 2 phases.
         1. Track up and find the prefix above the cross-check coords.
@@ -233,7 +255,7 @@ class Board:
             prefix_node = prefix_node.children[self.board[upper][c].value]
             upper += 1
         candidates = set()
-        for candidate in self.board[r][c].cross_checks:
+        for candidate in self.board[r][c].cross_checks_vertical:
             if candidate not in prefix_node.children:
                 continue
             suffix_node = prefix_node.children[candidate]
@@ -247,14 +269,45 @@ class Board:
                 lower += 1
             if suffix_node and suffix_node.is_valid_word:
                 candidates.add(candidate)
-        self.board[r][c].cross_checks = candidates
+        self.board[r][c].cross_checks_vertical = candidates
+
+    def _update_h_cross_check(self, coords: Tuple[int, int]):
+        """
+        This is somewhat duplicated from _update_v_cross_check with movement across row.
+        """
+        r, c = coords
+        left = c
+        while self._in_bounds(r, left - 1) and not self.board[r][left - 1].vacant():
+            left -= 1
+        prefix_node = self.dict_trie
+        while left < c:
+            # TODO: Exception check since prefix should always exist
+            prefix_node = prefix_node.children[self.board[r][left].value]
+            left += 1
+        candidates = set()
+        for candidate in self.board[r][c].cross_checks_horizontal:
+            if candidate not in prefix_node.children:
+                continue
+            suffix_node = prefix_node.children[candidate]
+            right = c+1
+            while self._in_bounds(r, right) and not self.board[r][right].vacant():
+                sq = self.board[r][right]
+                if sq.value not in suffix_node.children:
+                    suffix_node = None
+                    break
+                suffix_node = suffix_node.children[sq.value]
+                right += 1
+            if suffix_node and suffix_node.is_valid_word:
+                candidates.add(candidate)
+        self.board[r][c].cross_checks_horizontal = candidates
 
     def apply_best_move(self):
-        # TODO: compute cross-checks on each successful move
         if not self.best_word or self.best_score <= 0:
             return
+        if self.used_transpose:
+            self._transpose()
         r, c = self.start_coords
-        to_cross_check = []
+        v_cross_check = []
         for i, ch in enumerate(self.best_word):
             square = self.board[r][c + i]
             if not square.vacant():
@@ -265,15 +318,24 @@ class Board:
             upper = self._find_first_vacant_in_column(r, c + i, functools.partial(add, -1))
             lower = self._find_first_vacant_in_column(r, c + i, functools.partial(add, 1))
             if upper:
-                to_cross_check.append(upper)
+                v_cross_check.append(upper)
             if lower:
-                to_cross_check.append(lower)
-        # Cross-check all candidates
-        for cc in to_cross_check:
-            self._update_cross_check(cc)
+                v_cross_check.append(lower)
+        # Vertical cross-check candidates
+        for cc in v_cross_check:
+            self._update_v_cross_check(cc)
+
+        # The only horizontal cross-check candidates are on either side of the end of the word
+        h_candidates = [(r, c-1), (r, c+len(self.best_word))]
+        for cc in h_candidates:
+            if self._in_bounds(*cc):
+                self._update_h_cross_check(cc)
+
+        # TODO: consider returning the used tiles to the caller to replenish tiles
+        # Clear turn state once move is applied
         self._clear_turn_state()
 
-    def add_premium_squares(self):
+    def _add_premium_squares(self):
         # Adds all the premium squares that influence the word's score.
         premium_mapping = {
             SquareType.TWS: [(0, 0), (7, 0), (14, 0), (0, 7), (14, 7), (0, 14), (7, 14), (14, 14)],
