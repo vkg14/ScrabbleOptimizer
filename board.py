@@ -89,6 +89,7 @@ class Board:
     def __init__(self, lexicon_file='lexicon/scrabble_word_list.pickle'):
         self.board = [[Square() for i in range(15)] for j in range(15)]
         self._add_premium_squares()
+        # TODO: keep track of words played
         self.words_played = set()
 
         with open(lexicon_file, 'rb') as f:
@@ -127,7 +128,7 @@ class Board:
                 score += (LETTER_VALUES[ch] * mult)
                 word_multiplier *= square.typ.word_multiplier()
                 new_letters += 1
-        # TODO: does not yet account for words formed vertically
+        # TODO: does not yet account for score of words formed vertically
         score *= word_multiplier
         if new_letters == 7:
             score += 50
@@ -157,7 +158,9 @@ class Board:
                 self.score_word(partial_word, (r, c - len(partial_word)))
                 pass
             for letter, child_node in trie_node.children.items():
-                cross_checks = square.cross_checks_horizontal if self.is_transposed else square.cross_checks_vertical
+                # We always form words horizontally but change the orientation of the board repr beforehand.
+                cross_checks = square.cross_checks_vertical \
+                    if not self.is_transposed else square.cross_checks_horizontal
                 if letter not in tiles or letter not in cross_checks:
                     continue
                 tiles.remove(letter)
@@ -247,6 +250,8 @@ class Board:
         """
         r, c = coords
         upper = r
+        cross_check = self.board[r][c].cross_checks_vertical \
+            if not self.is_transposed else self.board[r][c].cross_checks_horizontal
         while self._in_bounds(upper - 1, c) and not self.board[upper - 1][c].vacant():
             upper -= 1
         prefix_node = self.dict_trie
@@ -254,9 +259,10 @@ class Board:
             # TODO: Exception check since prefix should always exist
             prefix_node = prefix_node.children[self.board[upper][c].value]
             upper += 1
-        candidates = set()
-        for candidate in self.board[r][c].cross_checks_vertical:
+        removal_set = set()
+        for candidate in cross_check:
             if candidate not in prefix_node.children:
+                removal_set.add(candidate)
                 continue
             suffix_node = prefix_node.children[candidate]
             lower = r+1
@@ -267,9 +273,10 @@ class Board:
                     break
                 suffix_node = suffix_node.children[sq.value]
                 lower += 1
-            if suffix_node and suffix_node.is_valid_word:
-                candidates.add(candidate)
-        self.board[r][c].cross_checks_vertical = candidates
+            if not suffix_node or not suffix_node.is_valid_word:
+                # Unable to proceed to a valid trie node or node is non-terminal so this candidate should be del.
+                removal_set.add(candidate)
+        cross_check.difference_update(removal_set)
 
     def _update_h_cross_check(self, coords: Tuple[int, int]):
         """
@@ -277,6 +284,8 @@ class Board:
         """
         r, c = coords
         left = c
+        cross_check = self.board[r][c].cross_checks_horizontal \
+            if not self.is_transposed else self.board[r][c].cross_checks_vertical
         while self._in_bounds(r, left - 1) and not self.board[r][left - 1].vacant():
             left -= 1
         prefix_node = self.dict_trie
@@ -284,9 +293,10 @@ class Board:
             # TODO: Exception check since prefix should always exist
             prefix_node = prefix_node.children[self.board[r][left].value]
             left += 1
-        candidates = set()
-        for candidate in self.board[r][c].cross_checks_horizontal:
+        removal_set = set()
+        for candidate in cross_check:
             if candidate not in prefix_node.children:
+                removal_set.add(candidate)
                 continue
             suffix_node = prefix_node.children[candidate]
             right = c+1
@@ -297,9 +307,10 @@ class Board:
                     break
                 suffix_node = suffix_node.children[sq.value]
                 right += 1
-            if suffix_node and suffix_node.is_valid_word:
-                candidates.add(candidate)
-        self.board[r][c].cross_checks_horizontal = candidates
+            if not suffix_node or not suffix_node.is_valid_word:
+                # Unable to proceed to a valid trie node or node is non-terminal so this candidate should be del.
+                removal_set.add(candidate)
+        cross_check.difference_update(removal_set)
 
     def apply_best_move(self):
         if not self.best_word or self.best_score <= 0:
