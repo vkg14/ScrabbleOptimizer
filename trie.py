@@ -46,12 +46,17 @@ class TrieNode:
 
 
 def construct_scrabble_lexicon(target: str = PICKLE_FILE):
-    trie = TrieNode.construct_trie(LEXICON_TXT_FILE)
+    """
+    To check correctness, add this:
+
     print(trie.count_nodes())
-    with open(target, 'wb') as f:
-        pickle.dump(trie, f)
     with open(target, 'rb') as f:
         print(pickle.load(f).count_nodes())
+
+    """
+    trie = TrieNode.construct_trie(LEXICON_TXT_FILE)
+    with open(target, 'wb') as f:
+        pickle.dump(trie, f)
 
 
 if __name__ == '__main__':

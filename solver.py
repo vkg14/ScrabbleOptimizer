@@ -158,11 +158,33 @@ class Solver:
         self.best_score = 0
         self.used_transpose = False
 
+    def _compute_checks(self):
+        for r in range(15):
+            for c in range(15):
+                if not self.board[r][c].vacant():
+                    continue
+                adjacents = [(r, c-1), (r, c+1)]
+                check = False
+                for r1, c1 in adjacents:
+                    if not self.board.in_bounds(r1, c1):
+                        continue
+                    if not self.board[r1][c1].vacant():
+                        # at least one filled adjacent square along row
+                        check = True
+                        break
+                if check:
+                    self._update_h_cross_check((r, c))
+
     def fill_scenario(self, scenario: List[List[str]]):
         for r in range(15):
             for c in range(15):
                 if scenario[r][c] != '_':
                     self.board[r][c].value = scenario[r][c]
+
+        self._compute_checks()
+        self.board.transpose()
+        self._compute_checks()
+        self.board.transpose()
 
     def _is_potential_anchor(self, r, c):
         """
@@ -214,8 +236,9 @@ class Solver:
             anchor_placed: bool = True
     ):
         r, c = coords
-        if not self.board.in_bounds(r, c) or not tiles:
-            # Since we are out of bounds / no tiles, no further exploration can happen
+        if not self.board.in_bounds(r, c):
+            # Since we are out of bounds, no further exploration can happen
+            # Previously, we checked if we had no tiles here but we MUST continue until end of board or vacancy
             if trie_node.is_valid_word and anchor_placed:
                 self.score_word(partial_word, (r, c - len(partial_word)))
             return
@@ -268,10 +291,12 @@ class Solver:
                     prefix = ""
                     left_of_anchor += 1
                     continue
-                # Found an anchor, run alg and reset left counter
+                # Found an anchor, run algorithm with built prefix
                 start_node = self.dict_trie.traverse_prefix(prefix)
                 if start_node:
                     self.left_part(prefix, start_node, tiles, left_of_anchor, (r, c))
+                # Since this anchor was both vacant and connected, prefix and left must be reset.
+                prefix = ""
                 left_of_anchor = 0
 
     def find_best_move(self, tiles: List[str]):
@@ -430,7 +455,8 @@ class Solver:
             if self.board.in_bounds(*cc):
                 self._update_h_cross_check(cc)
 
-        # TODO: consider returning the used tiles to the caller to replenish tiles
         # Clear turn state once move is applied
         self._clear_turn_state()
+
+        # Return the used tiles
         return res

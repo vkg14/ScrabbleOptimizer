@@ -14,4 +14,6 @@ _  _  _  _  _  _  _  _  _  _  _  _  _  _  _
 _  _  _  _  _  _  _  _  _  _  _  _  _  _  _
 _  _  _  _  _  _  _  _  _  _  _  _  _  _  _
 
-['J', 'S', 'O', 'H', 'J', 'J', 'E']
+S
+
+This was previously breaking because the prefix was not being cleared while analyzing row 8 (FAULDS)
