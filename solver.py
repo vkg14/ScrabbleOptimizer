@@ -106,14 +106,14 @@ class ScrabbleBoard:
     # TODO: keep track of words played
     words_played: Set[str] = field(default_factory=set)
     transposed: bool = False
+    n: int = 15
 
     def __post_init__(self):
-        self.board = [[Square() for i in range(15)] for j in range(15)]
+        self.board = [[Square() for _ in range(self.n)] for _ in range(self.n)]
         self._add_premium_squares()
 
-    @staticmethod
-    def in_bounds(r, c):
-        return 0 <= r < 15 and 0 <= c < 15
+    def in_bounds(self, r, c):
+        return 0 <= r < self.n and 0 <= c < self.n
 
     def _add_premium_squares(self):
         # Adds all premium squares that influence the word's score.
@@ -156,11 +156,12 @@ class Solver:
         self.best_word = ""
         self.start_coords = (-1, -1)
         self.best_score = 0
+        self.score_per_letter: float = 0.0
         self.used_transpose = False
 
     def _compute_checks(self):
-        for r in range(15):
-            for c in range(15):
+        for r in range(self.board.n):
+            for c in range(self.board.n):
                 if not self.board[r][c].vacant():
                     continue
                 adjacents = [(r, c-1), (r, c+1)]
@@ -176,8 +177,10 @@ class Solver:
                     self._update_h_cross_check((r, c))
 
     def fill_scenario(self, scenario: List[List[str]]):
-        for r in range(15):
-            for c in range(15):
+        assert len(scenario) == self.board.n and len(scenario[0]) == self.board.n, \
+            f"Wrong size board ({len(scenario)}, {len(scenario[0])})."
+        for r in range(self.board.n):
+            for c in range(self.board.n):
                 if scenario[r][c] != '_':
                     self.board[r][c].value = scenario[r][c]
 
@@ -221,11 +224,14 @@ class Solver:
         score += cross_words_score
         if new_letters == 7:
             score += 50
-        if score > self.best_score:
+        # Pick word that gives most points per letter placed
+        avg_score = score / new_letters
+        if avg_score > self.score_per_letter:
             self.best_word = word
-            self.start_coords = coords
             self.best_score = score
+            self.start_coords = coords
             self.used_transpose = self.board.transposed
+            self.score_per_letter = avg_score
         return score
 
     def extend_right(
@@ -276,12 +282,12 @@ class Solver:
 
     def _best_move_helper(self, tiles: List[str]):
         # When in the middle of game, solve using anchors
-        for r in range(15):
+        for r in range(self.board.n):
             # We solve the best for each row
             # We must keep track of the number of vacant / unconnected squares left of anchor
             left_of_anchor = 0
             prefix = ""
-            for c in range(15):
+            for c in range(self.board.n):
                 if not self.board[r][c].vacant():
                     prefix += self.board[r][c].value
                     left_of_anchor = 0
@@ -314,6 +320,7 @@ class Solver:
 
     def _clear_turn_state(self):
         self.best_score = 0
+        self.score_per_letter = 0
         self.best_word = ""
         self.start_coords = (-1, -1)
         self.used_transpose = False
