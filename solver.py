@@ -65,7 +65,9 @@ class SquareType(StrEnum):
 @dataclass
 class Square:
     value: Optional[str] = None
+    cross_sum_vertical: int = 0
     cross_checks_vertical: Set[str] = field(default_factory=set)
+    cross_sum_horizontal: int = 0
     cross_checks_horizontal: Set[str] = field(default_factory=set)
     typ: SquareType = SquareType.NORMAL
 
@@ -76,13 +78,26 @@ class Square:
     def vacant(self):
         return not self.value
 
+    def set_cross_checks_vertical(self, s: Set[str]):
+        self.cross_checks_vertical = s
+
+    def set_cross_checks_horizontal(self, s: Set[str]):
+        self.cross_checks_horizontal = s
+
+    def set_cross_sum_vertical(self, val: int):
+        self.cross_sum_vertical= val
+
+    def set_cross_sum_horizontal(self, val: int):
+        self.cross_sum_horizontal = val
+
     def __str__(self):
         if self.vacant():
-            return str(self.typ)
+            return "_"
         return self.value
 
     def __repr__(self):
-        return f"Square({self.typ}, {self.value or str()})"
+        placeholder = "_"
+        return f"Square({self.typ}, {self.value or placeholder})"
 
 
 @dataclass
@@ -143,6 +158,12 @@ class Solver:
         self.best_score = 0
         self.used_transpose = False
 
+    def fill_scenario(self, scenario: List[List[str]]):
+        for r in range(15):
+            for c in range(15):
+                if scenario[r][c] != '_':
+                    self.board[r][c].value = scenario[r][c]
+
     def _is_potential_anchor(self, r, c):
         """
         Every move (except the very first) requires an anchor, a cell which is currently vacant but adjacent to
@@ -156,20 +177,26 @@ class Solver:
     def score_word(self, word: str, coords: Tuple[int, int]):
         r, c = coords
         score = 0
+        cross_words_score = 0
         word_multiplier = 1
         new_letters = 0
         for i, ch in enumerate(word):
             square = self.board[r][c + i]
             if not square.vacant():
-                assert square.value == ch, f"Problem with word, {word}, formed at {coords} in {i}th char."
+                assert square.value == ch, f"Problem with word, {word}, formed at {coords} in {i}th char ({ch})."
                 score += LETTER_VALUES[ch]
             else:
-                mult = square.typ.letter_multiplier()
-                score += (LETTER_VALUES[ch] * mult)
-                word_multiplier *= square.typ.word_multiplier()
+                lm = square.typ.letter_multiplier()
+                wm = square.typ.word_multiplier()
+                score += (LETTER_VALUES[ch] * lm)
+                word_multiplier *= wm
                 new_letters += 1
-        # TODO: does not yet account for score of words formed vertically
+                # Solve for cross words
+                cross_sum = square.cross_sum_vertical if not self.board.transposed else square.cross_sum_horizontal
+                if cross_sum > 0:
+                    cross_words_score += (cross_sum + LETTER_VALUES[ch] * lm) * wm
         score *= word_multiplier
+        score += cross_words_score
         if new_letters == 7:
             score += 50
         if score > self.best_score:
@@ -285,20 +312,22 @@ class Solver:
         """
         r, c = coords
         upper = r
-        cross_check = self.board[r][c].cross_checks_vertical \
-            if not self.board.transposed else self.board[r][c].cross_checks_horizontal
         while self.board.in_bounds(upper - 1, c) and not self.board[upper - 1][c].vacant():
             upper -= 1
         prefix_node = self.dict_trie
+        prefix_sum = 0
         while upper < r:
             # TODO: Exception check since prefix should always exist
             prefix_node = prefix_node.children[self.board[upper][c].value]
+            prefix_sum += LETTER_VALUES[self.board[upper][c].value]
             upper += 1
-        removal_set = set()
-        for candidate in cross_check:
+        # We must refresh cross-check since more letters could throw new candidates into consideration.
+        new_cross_check = {letter for letter in LETTER_VALUES if letter != '#'}
+        for candidate in list(new_cross_check):
             if candidate not in prefix_node.children:
-                removal_set.add(candidate)
+                new_cross_check.remove(candidate)
                 continue
+            suffix_sum = 0
             suffix_node = prefix_node.children[candidate]
             lower = r + 1
             while self.board.in_bounds(lower, c) and not self.board[lower][c].vacant():
@@ -307,11 +336,20 @@ class Solver:
                     suffix_node = None
                     break
                 suffix_node = suffix_node.children[sq.value]
+                suffix_sum += LETTER_VALUES[sq.value]
                 lower += 1
-            if not suffix_node or not suffix_node.is_valid_word:
+            if suffix_node and suffix_node.is_valid_word:
+                if not self.board.transposed:
+                    self.board[r][c].set_cross_sum_vertical(prefix_sum + suffix_sum)
+                else:
+                    self.board[r][c].set_cross_sum_horizontal(prefix_sum + suffix_sum)
+            else:
                 # Unable to proceed to a valid trie node or node is non-terminal so this candidate should be del.
-                removal_set.add(candidate)
-        cross_check.difference_update(removal_set)
+                new_cross_check.remove(candidate)
+        if not self.board.transposed:
+            self.board[r][c].set_cross_checks_vertical(new_cross_check)
+        else:
+            self.board[r][c].set_cross_checks_horizontal(new_cross_check)
 
     def _update_h_cross_check(self, coords: Tuple[int, int]):
         """
@@ -319,20 +357,23 @@ class Solver:
         """
         r, c = coords
         left = c
-        cross_check = self.board[r][c].cross_checks_horizontal \
-            if not self.board.transposed else self.board[r][c].cross_checks_vertical
         while self.board.in_bounds(r, left - 1) and not self.board[r][left - 1].vacant():
             left -= 1
         prefix_node = self.dict_trie
+        prefix_sum = 0
         while left < c:
             # TODO: Exception check since prefix should always exist
-            prefix_node = prefix_node.children[self.board[r][left].value]
+            sq = self.board[r][left]
+            prefix_node = prefix_node.children[sq.value]
+            prefix_sum += LETTER_VALUES[sq.value]
             left += 1
-        removal_set = set()
-        for candidate in cross_check:
+        # We must refresh cross-check since more letters could throw new candidates into consideration.
+        new_cross_check = {letter for letter in LETTER_VALUES if letter != '#'}
+        for candidate in list(new_cross_check):
             if candidate not in prefix_node.children:
-                removal_set.add(candidate)
+                new_cross_check.remove(candidate)
                 continue
+            suffix_sum = 0
             suffix_node = prefix_node.children[candidate]
             right = c + 1
             while self.board.in_bounds(r, right) and not self.board[r][right].vacant():
@@ -340,16 +381,26 @@ class Solver:
                 if sq.value not in suffix_node.children:
                     suffix_node = None
                     break
+                suffix_sum += LETTER_VALUES[sq.value]
                 suffix_node = suffix_node.children[sq.value]
                 right += 1
-            if not suffix_node or not suffix_node.is_valid_word:
+            if suffix_node and suffix_node.is_valid_word:
+                if not self.board.transposed:
+                    self.board[r][c].set_cross_sum_horizontal(prefix_sum + suffix_sum)
+                else:
+                    self.board[r][c].set_cross_sum_vertical(prefix_sum + suffix_sum)
+            else:
                 # Unable to proceed to a valid trie node or node is non-terminal so this candidate should be del.
-                removal_set.add(candidate)
-        cross_check.difference_update(removal_set)
+                new_cross_check.remove(candidate)
+        if not self.board.transposed:
+            self.board[r][c].set_cross_checks_horizontal(new_cross_check)
+        else:
+            self.board[r][c].set_cross_checks_vertical(new_cross_check)
 
-    def apply_best_move(self):
+    def apply_best_move(self) -> List[str]:
+        res = []
         if not self.best_word or self.best_score <= 0:
-            return
+            return res
         if self.used_transpose:
             self.board.transpose()
         r, c = self.start_coords
@@ -360,6 +411,8 @@ class Solver:
                 assert square.value == ch, \
                     f"Problem with word, {self.best_word}, formed at {self.start_coords} in {i}th char."
             else:
+                # Place a tile
+                res.append(ch)
                 square.value = ch
             upper = self._find_first_vacant_in_column(r, c + i, functools.partial(add, -1))
             lower = self._find_first_vacant_in_column(r, c + i, functools.partial(add, 1))
@@ -380,3 +433,4 @@ class Solver:
         # TODO: consider returning the used tiles to the caller to replenish tiles
         # Clear turn state once move is applied
         self._clear_turn_state()
+        return res
