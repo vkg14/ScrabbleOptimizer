@@ -9,7 +9,7 @@ def print_racks(rack1, rack2):
     print(rack2)
 
 
-def explore_error_cases(filename: str):
+def explore_error_case(filename: str):
     with open(filename) as f:
         content = f.read()
     board, rack, reason = content.split('\n\n')
@@ -71,6 +71,7 @@ def sample_game():
         # Print board and rack state
         print(tabulate(s.board.board))
         print_racks(rack1, rack2)
+        print(f'{bag.get_remaining_tiles()} tiles left in the bag.')
 
         # If there are no more tiles in our rack, end the game.
         if not rack:
@@ -81,5 +82,5 @@ def sample_game():
 
 # Press the green button in the gutter to run the script.
 if __name__ == '__main__':
-    # explore_error_cases('error_cases/inappropriate_connection.txt')
+    # explore_error_case('error_cases/inappropriate_connection.txt')
     sample_game()
