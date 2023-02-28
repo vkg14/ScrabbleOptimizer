@@ -30,6 +30,7 @@ def explore_error_case(filename: str):
 
 def sample_game():
     bag = TileBag()
+    print(f'Starting with {bag.get_remaining_tiles()} tiles.')
     rack1 = [bag.take_from_bag().get_letter() for _ in range(7)]
     rack2 = [bag.take_from_bag().get_letter() for _ in range(7)]
     print_racks(rack1, rack2)
@@ -80,7 +81,6 @@ def sample_game():
     print(f'Game finished in {turns} turns with total score of {score}.')
 
 
-# Press the green button in the gutter to run the script.
 if __name__ == '__main__':
     # explore_error_case('error_cases/inappropriate_connection.txt')
     sample_game()
