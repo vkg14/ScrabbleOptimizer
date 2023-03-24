@@ -222,38 +222,6 @@ def create_board(image, expected_file='default'):
     print(f'Experiment summary: Hue std dev for unoccupied, occupied was {unoccupied_max_std}, {occupied_min_std}.')
 
 
-def try_letters():
-    # Load the image
-    image = cv2.imread("images/sample_board.png")
-
-    # Convert the image to grayscale
-    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-
-    # Apply a threshold to binarize the image
-    threshold = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV | cv2.THRESH_OTSU)[1]
-
-    # Apply morphological operations to remove noise and enhance the character regions
-    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
-    morph = cv2.morphologyEx(threshold, cv2.MORPH_OPEN, kernel)
-
-    # Find the contours of the connected regions in the image
-    contours, hierarchy = cv2.findContours(morph, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-
-    # Filter out the contours that are too small or too large to be letters
-    letters = []
-    for contour in contours:
-        x, y, w, h = cv2.boundingRect(contour)
-        if 10 < w < 50 and 10 < h < 50:
-            letters.append((x, y, w, h))
-
-    # Crop the letters from the image using their bounding boxes
-    for letter in letters:
-        x, y, w, h = letter
-        roi = image[y:y + h, x:x + w]
-        text = pytesseract.image_to_string(roi, config="--psm 10")
-        print(text)
-
-
 if __name__ == '__main__':
     in_to_out_mapper = {
         "images/sample_board_new.png": "default",
