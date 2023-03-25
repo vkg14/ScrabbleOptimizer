@@ -171,6 +171,34 @@ class Solver:
         for anchor in anchors:
             self._compute_and_set_cross_check(anchor)
 
+    def _validate_horizontal(self):
+        for r in range(self.board.n):
+            word_len = 0
+            node = self.dict_trie
+            for c in range(self.board.n):
+                if not self.board[r][c].vacant():
+                    assert self.board[r][c].value in node.children, f"Could not traverse trie at {r},{c}"
+                    node = node.children[self.board[r][c].value]
+                    word_len += 1
+                else:
+                    # When we find a vacant space, we check whether our existing that the node is valid IF word > 1
+                    assert word_len <= 1 or node.is_valid_word, f"Found unknown {word_len}-length word ending {r},{c}."
+                    word_len = 0
+                    node = self.dict_trie
+            # Check word at end of row
+            if word_len > 1:
+                assert node.is_valid_word, f"Found unknown word ending at {r},{c}"
+
+    def validate_board(self):
+        assert not self.board.transposed, "This operation requires the board to not be transposed."
+        print("Validating horizontal...")
+        self._validate_horizontal()
+        self.board.transpose()
+        print("Validating vertical...")
+        self._validate_horizontal()
+        self.board.transpose()
+        print("Successful validation!")
+
     def _is_potential_anchor(self, r, c):
         """
         Every move (except the very first) requires an anchor, a cell which is currently vacant but adjacent to

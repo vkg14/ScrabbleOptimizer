@@ -78,6 +78,8 @@ def sample_game():
         if not rack:
             break
 
+    s.validate_board()
+
     print(f'Game finished in {turns} turns with total score of {score}.')
 
 
