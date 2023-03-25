@@ -159,26 +159,6 @@ class Solver:
         self.score_per_letter: float = 0.0
         self.used_transpose = False
 
-    def _compute_checks(self):
-        # TODO: we can make this cleaner: just find anchors and compute their checks using new method
-        # If they are anchors, they are adjacent to some existing tile
-        # If they are free of adjacencies in one dimension, we will not set cross-sum / cross-check
-        for r in range(self.board.n):
-            for c in range(self.board.n):
-                if not self.board[r][c].vacant():
-                    continue
-                adjacents = [(r, c - 1), (r, c + 1)]
-                check = False
-                for r1, c1 in adjacents:
-                    if not self.board.in_bounds(r1, c1):
-                        continue
-                    if not self.board[r1][c1].vacant():
-                        # at least one filled adjacent square along row
-                        check = True
-                        break
-                if check:
-                    self._update_h_cross_check((r, c))
-
     def fill_scenario(self, scenario: List[List[str]]):
         assert len(scenario) == self.board.n and len(scenario[0]) == self.board.n, \
             f"Wrong size board ({len(scenario)}, {len(scenario[0])})."
@@ -186,12 +166,6 @@ class Solver:
             for c in range(self.board.n):
                 if scenario[r][c] != '_':
                     self.board[r][c].value = scenario[r][c]
-        """
-        self._compute_checks()
-        self.board.transpose()
-        self._compute_checks()
-        self.board.transpose()
-        """
         # For all vacant spaces adjacent to some filled space (ie, anchor), compute cross-checks
         anchors = [(r, c) for r in range(self.board.n) for c in range(self.board.n) if self._is_potential_anchor(r, c)]
         for anchor in anchors:
@@ -345,100 +319,6 @@ class Solver:
             return r, c
         return None
 
-    def _update_v_cross_check(self, coords: Tuple[int, int]):
-        """
-        This method can be broken down into 2 phases.
-        1. Track up and find the prefix above the cross-check coords.
-        2. Find whether any current letter in existing cross-check leads to a valid word
-        with the computed prefix (above) and computed suffix (walking down column).
-        """
-        r, c = coords
-        upper = r
-        while self.board.in_bounds(upper - 1, c) and not self.board[upper - 1][c].vacant():
-            upper -= 1
-        prefix_node = self.dict_trie
-        prefix_sum = 0
-        while upper < r:
-            # TODO: Exception check since prefix should always exist
-            prefix_node = prefix_node.children[self.board[upper][c].value]
-            prefix_sum += LETTER_VALUES[self.board[upper][c].value]
-            upper += 1
-        # We must refresh cross-check since more letters could throw new candidates into consideration.
-        new_cross_check = {letter for letter in LETTER_VALUES if letter != '#'}
-        for candidate in list(new_cross_check):
-            if candidate not in prefix_node.children:
-                new_cross_check.remove(candidate)
-                continue
-            suffix_sum = 0
-            suffix_node = prefix_node.children[candidate]
-            lower = r + 1
-            while self.board.in_bounds(lower, c) and not self.board[lower][c].vacant():
-                sq = self.board[lower][c]
-                if sq.value not in suffix_node.children:
-                    suffix_node = None
-                    break
-                suffix_node = suffix_node.children[sq.value]
-                suffix_sum += LETTER_VALUES[sq.value]
-                lower += 1
-            if suffix_node and suffix_node.is_valid_word:
-                if not self.board.transposed:
-                    self.board[r][c].set_cross_sum_vertical(prefix_sum + suffix_sum)
-                else:
-                    self.board[r][c].set_cross_sum_horizontal(prefix_sum + suffix_sum)
-            else:
-                # Unable to proceed to a valid trie node or node is non-terminal so this candidate should be del.
-                new_cross_check.remove(candidate)
-        if not self.board.transposed:
-            self.board[r][c].set_cross_checks_vertical(new_cross_check)
-        else:
-            self.board[r][c].set_cross_checks_horizontal(new_cross_check)
-
-    def _update_h_cross_check(self, coords: Tuple[int, int]):
-        """
-        This is somewhat duplicated from _update_v_cross_check with movement across row.
-        """
-        r, c = coords
-        left = c
-        while self.board.in_bounds(r, left - 1) and not self.board[r][left - 1].vacant():
-            left -= 1
-        prefix_node = self.dict_trie
-        prefix_sum = 0
-        while left < c:
-            # TODO: Exception check since prefix should always exist
-            sq = self.board[r][left]
-            prefix_node = prefix_node.children[sq.value]
-            prefix_sum += LETTER_VALUES[sq.value]
-            left += 1
-        # We must refresh cross-check since more letters could throw new candidates into consideration.
-        new_cross_check = {letter for letter in LETTER_VALUES if letter != '#'}
-        for candidate in list(new_cross_check):
-            if candidate not in prefix_node.children:
-                new_cross_check.remove(candidate)
-                continue
-            suffix_sum = 0
-            suffix_node = prefix_node.children[candidate]
-            right = c + 1
-            while self.board.in_bounds(r, right) and not self.board[r][right].vacant():
-                sq = self.board[r][right]
-                if sq.value not in suffix_node.children:
-                    suffix_node = None
-                    break
-                suffix_sum += LETTER_VALUES[sq.value]
-                suffix_node = suffix_node.children[sq.value]
-                right += 1
-            if suffix_node and suffix_node.is_valid_word:
-                if not self.board.transposed:
-                    self.board[r][c].set_cross_sum_horizontal(prefix_sum + suffix_sum)
-                else:
-                    self.board[r][c].set_cross_sum_vertical(prefix_sum + suffix_sum)
-            else:
-                # Unable to proceed to a valid trie node or node is non-terminal so this candidate should be del.
-                new_cross_check.remove(candidate)
-        if not self.board.transposed:
-            self.board[r][c].set_cross_checks_horizontal(new_cross_check)
-        else:
-            self.board[r][c].set_cross_checks_vertical(new_cross_check)
-
     def _compute_cross_check_vertical(self, coords: Tuple[int, int]):
         """
         This re-computes the vertical cross-check and cross-sum for a given coordinate.
@@ -447,6 +327,8 @@ class Solver:
         1a. If both are empty, the cross-check for this should be the full letter-set, c-sum 0, and we early-return.
         1b. If not, your cross sum is the total point value computed for the prefix and suffix.
         2. From the prefix node, try all letter candidates and see if they lead to a valid word with the suffix.
+        Explained better: Find whether any letter leads to a valid word
+        with the computed prefix (above) and computed suffix (walking down column).
         3. For the candidates that don't, remove from the running set for new cross-check.
         """
         prefix = ""
