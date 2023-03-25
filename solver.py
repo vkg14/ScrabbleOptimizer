@@ -186,11 +186,16 @@ class Solver:
             for c in range(self.board.n):
                 if scenario[r][c] != '_':
                     self.board[r][c].value = scenario[r][c]
-
+        """
         self._compute_checks()
         self.board.transpose()
         self._compute_checks()
         self.board.transpose()
+        """
+        # For all vacant spaces adjacent to some filled space (ie, anchor), compute cross-checks
+        anchors = [(r, c) for r in range(self.board.n) for c in range(self.board.n) if self._is_potential_anchor(r, c)]
+        for anchor in anchors:
+            self._compute_and_set_cross_check(anchor)
 
     def _is_potential_anchor(self, r, c):
         """
@@ -479,7 +484,7 @@ class Solver:
                     break
                 node = node.children[suffix_letter]
             if not node or not node.is_valid_word:
-                # This candidate needs to be removed
+                # Unable to track down trie for suffix / not at a valid leaf -> eliminate candidate
                 new_cross_check.remove(candidate)
         return new_cross_check, cross_sum
 
@@ -488,9 +493,10 @@ class Solver:
         r, c = coords
         v_check, v_sum = self._compute_cross_check_vertical(coords)
         self.board.transpose()
-        # Compute horizontal post-transpose
+        # Compute horizontal as "vertical" post-transpose with flipped dimensions
         h_check, h_sum = self._compute_cross_check_vertical((c, r))
         self.board.transpose()
+        # Set vertical and horizontal checks as computed above
         self.board[r][c].set_cross_sum_vertical(v_sum)
         self.board[r][c].set_cross_checks_vertical(v_check)
         self.board[r][c].set_cross_sum_horizontal(h_sum)
@@ -503,10 +509,6 @@ class Solver:
         if self.used_transpose:
             self.board.transpose()
         r, c = self.start_coords
-        v_cross_check = []
-        # TODO: a cleaner design might be to:
-        # O. (no change necessary) Place tiles as if you're always playing horizontally (transpose when you need).
-        # 1. Collect cross-check candidates while placing the word (vacant squares "connected" to newly placed letters)
         all_candidates = []
         # 2. Re-compute both H and V cross-checks for these candidates without the transpose-logic.
         for i, ch in enumerate(self.best_word):
@@ -522,23 +524,14 @@ class Solver:
             upper = self._find_first_vacant_in_column(r, c + i, functools.partial(add, -1))
             lower = self._find_first_vacant_in_column(r, c + i, functools.partial(add, 1))
             if upper:
-                v_cross_check.append(upper)
                 all_candidates.append(upper)
             if lower:
-                v_cross_check.append(lower)
                 all_candidates.append(lower)
-        # Vertical cross-check candidates
-        """
-        TODO: remove
-        for cc in v_cross_check:
-            self._update_v_cross_check(cc)
-        """
 
         # The only horizontal cross-check candidates are on either side of the end of the word
         h_candidates = [(r, c - 1), (r, c + len(self.best_word))]
         for cc in h_candidates:
             if self.board.in_bounds(*cc):
-                # TODO: Remove -> self._update_h_cross_check(cc)
                 all_candidates.append(cc)
 
         # Flip candidates dimensions and clear turn state once move is applied
