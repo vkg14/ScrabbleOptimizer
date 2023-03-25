@@ -117,6 +117,7 @@ class ScrabbleBoard:
 
     def _add_premium_squares(self):
         # Adds all premium squares that influence the word's score.
+        # TODO: store these in defaultdict(int) with the associated multipliers for word/letter - will be cleaner
         premium_mapping = {
             SquareType.TWS: [(0, 0), (7, 0), (14, 0), (0, 7), (14, 7), (0, 14), (7, 14), (14, 14)],
             SquareType.DWS: [
@@ -440,9 +441,7 @@ class Solver:
 
         # The only horizontal cross-check candidates are on either side of the end of the word
         h_candidates = [(r, c - 1), (r, c + len(self.best_word))]
-        for cc in h_candidates:
-            if self.board.in_bounds(*cc):
-                all_candidates.append(cc)
+        all_candidates.extend([(rp, cp) for rp, cp in h_candidates if self.board.in_bounds(rp, cp)])
 
         # Flip candidates dimensions and clear turn state once move is applied
         if self.board.transposed:
