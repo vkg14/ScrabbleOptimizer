@@ -85,7 +85,7 @@ class Square:
         self.cross_checks_horizontal = s
 
     def set_cross_sum_vertical(self, val: int):
-        self.cross_sum_vertical= val
+        self.cross_sum_vertical = val
 
     def set_cross_sum_horizontal(self, val: int):
         self.cross_sum_horizontal = val
@@ -160,11 +160,14 @@ class Solver:
         self.used_transpose = False
 
     def _compute_checks(self):
+        # TODO: we can make this cleaner: just find anchors and compute their checks using new method
+        # If they are anchors, they are adjacent to some existing tile
+        # If they are free of adjacencies in one dimension, we will not set cross-sum / cross-check
         for r in range(self.board.n):
             for c in range(self.board.n):
                 if not self.board[r][c].vacant():
                     continue
-                adjacents = [(r, c-1), (r, c+1)]
+                adjacents = [(r, c - 1), (r, c + 1)]
                 check = False
                 for r1, c1 in adjacents:
                     if not self.board.in_bounds(r1, c1):
@@ -431,6 +434,68 @@ class Solver:
         else:
             self.board[r][c].set_cross_checks_vertical(new_cross_check)
 
+    def _compute_cross_check_vertical(self, coords: Tuple[int, int]):
+        """
+        This re-computes the vertical cross-check and cross-sum for a given coordinate.
+        The steps to be taken:
+        1. Find the prefix above the coordinates and the suffix below the coordinates and the total point value.
+        1a. If both are empty, the cross-check for this should be the full letter-set, c-sum 0, and we early-return.
+        1b. If not, your cross sum is the total point value computed for the prefix and suffix.
+        2. From the prefix node, try all letter candidates and see if they lead to a valid word with the suffix.
+        3. For the candidates that don't, remove from the running set for new cross-check.
+        """
+        prefix = ""
+        suffix = ""
+        new_cross_check = {letter for letter in LETTER_VALUES if letter != '#'}
+        r, c = coords
+        # Find prefix
+        upper = r
+        cross_sum = 0
+        while self.board.in_bounds(upper - 1, c) and not self.board[upper - 1][c].vacant():
+            upper -= 1
+            sq = self.board[upper][c]
+            prefix = sq.value + prefix
+            cross_sum += LETTER_VALUES[sq.value]
+        prefix_node = self.dict_trie.traverse_prefix(prefix)
+        # Find suffix
+        lower = r + 1
+        while self.board.in_bounds(lower, c) and not self.board[lower][c].vacant():
+            sq = self.board[lower][c]
+            suffix += sq.value
+            cross_sum += LETTER_VALUES[sq.value]
+            lower += 1
+        if not prefix and not suffix:
+            # No cross-check needed - for good measure, set cross-check to full set and cross-sum to 0.
+            return new_cross_check, 0
+        # Compute valid candidates
+        for candidate in list(new_cross_check):
+            if candidate not in prefix_node.children:
+                new_cross_check.remove(candidate)
+                continue
+            node = prefix_node.children[candidate]
+            for suffix_letter in suffix:
+                if suffix_letter not in node.children:
+                    node = None
+                    break
+                node = node.children[suffix_letter]
+            if not node or not node.is_valid_word:
+                # This candidate needs to be removed
+                new_cross_check.remove(candidate)
+        return new_cross_check, cross_sum
+
+    def _compute_and_set_cross_check(self, coords: Tuple[int, int]):
+        assert not self.board.transposed, "This operation requires the board to not be transposed."
+        r, c = coords
+        v_check, v_sum = self._compute_cross_check_vertical(coords)
+        self.board.transpose()
+        # Compute horizontal post-transpose
+        h_check, h_sum = self._compute_cross_check_vertical((c, r))
+        self.board.transpose()
+        self.board[r][c].set_cross_sum_vertical(v_sum)
+        self.board[r][c].set_cross_checks_vertical(v_check)
+        self.board[r][c].set_cross_sum_horizontal(h_sum)
+        self.board[r][c].set_cross_checks_horizontal(h_check)
+
     def apply_best_move(self) -> List[str]:
         res = []
         if not self.best_word or self.best_score <= 0:
@@ -439,33 +504,50 @@ class Solver:
             self.board.transpose()
         r, c = self.start_coords
         v_cross_check = []
+        # TODO: a cleaner design might be to:
+        # O. (no change necessary) Place tiles as if you're always playing horizontally (transpose when you need).
+        # 1. Collect cross-check candidates while placing the word (vacant squares "connected" to newly placed letters)
+        all_candidates = []
+        # 2. Re-compute both H and V cross-checks for these candidates without the transpose-logic.
         for i, ch in enumerate(self.best_word):
             square = self.board[r][c + i]
             if not square.vacant():
+                # The tile was placed previously - we need not update any vertical associated with this column.
                 assert square.value == ch, \
                     f"Problem with word, {self.best_word}, formed at {self.start_coords} in {i}th char."
-            else:
-                # Place a tile
-                res.append(ch)
-                square.value = ch
+                continue
+            # Place a tile
+            res.append(ch)
+            square.value = ch
             upper = self._find_first_vacant_in_column(r, c + i, functools.partial(add, -1))
             lower = self._find_first_vacant_in_column(r, c + i, functools.partial(add, 1))
             if upper:
                 v_cross_check.append(upper)
+                all_candidates.append(upper)
             if lower:
                 v_cross_check.append(lower)
+                all_candidates.append(lower)
         # Vertical cross-check candidates
+        """
+        TODO: remove
         for cc in v_cross_check:
             self._update_v_cross_check(cc)
+        """
 
         # The only horizontal cross-check candidates are on either side of the end of the word
         h_candidates = [(r, c - 1), (r, c + len(self.best_word))]
         for cc in h_candidates:
             if self.board.in_bounds(*cc):
-                self._update_h_cross_check(cc)
+                # TODO: Remove -> self._update_h_cross_check(cc)
+                all_candidates.append(cc)
 
-        # Clear turn state once move is applied
+        # Flip candidates dimensions and clear turn state once move is applied
+        if self.board.transposed:
+            all_candidates = [(c, r) for r, c in all_candidates]
         self._clear_turn_state()
+
+        for candidate in all_candidates:
+            self._compute_and_set_cross_check(candidate)
 
         # Return the used tiles
         return res
