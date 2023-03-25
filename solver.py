@@ -186,8 +186,8 @@ class Solver:
                     word_len = 0
                     node = self.dict_trie
             # Check word at end of row
-            if word_len > 1:
-                assert node.is_valid_word, f"Found unknown word ending at {r},{c}"
+            assert word_len <= 1 or node.is_valid_word, \
+                f"Found unknown {word_len}-length word ending {r},{self.board.n - 1}."
 
     def validate_board(self):
         assert not self.board.transposed, "This operation requires the board to not be transposed."
