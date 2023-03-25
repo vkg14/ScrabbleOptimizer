@@ -122,6 +122,7 @@ def preprocess_cell_image(image):
     roi = cv2.cvtColor(roi, cv2.COLOR_RGB2GRAY)
     roi = cv2.resize(roi, (0, 0), fx=1.5, fy=1.5)
     thresh = cv2.threshold(roi, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)[1]
+    # ret, thresh = cv2.threshold(roi, 25, 255, cv2.THRESH_BINARY)
     return 255 - thresh
 
 
@@ -129,6 +130,7 @@ def extract_char_worker(image, r, c):
     # Unpack due to process pool executor constraints
     roi = get_cell(image, r, c)
     roi = preprocess_cell_image(roi)
+    # psm 11 is *much* more performant than 10
     custom_config = r'--oem 1 --psm 11 -c tessedit_char_whitelist="ABCDEFGHIJKLMNOPQRSTUVWXYZ" '
     text = pytesseract.image_to_string(roi, lang='eng', config=custom_config).strip()
     return r, c, text
@@ -218,6 +220,9 @@ def create_board(image, expected_file='default'):
                 correctly_detected += 1
             else:
                 print(f'Expected nothing but found {text} at {r}, {c}.')
+                cell = get_cell(image, r, c)
+                show_image(cell)
+                show_image(preprocess_cell_image(cell))
     print(f'Summary matches -> {correctly_detected} correctly detected; {undetected} undetected.')
     print(f'Experiment summary: Hue std dev for unoccupied, occupied was {unoccupied_max_std}, {occupied_min_std}.')
 
@@ -227,8 +232,8 @@ if __name__ == '__main__':
         "images/sample_board_new.png": "default",
         "images/board1_srdewan.jpeg": "checkers/board1.txt"
     }
-    # filename = "images/sample_board_new.png"
-    filename = "images/board1_srdewan.jpeg"
+    filename = "images/sample_board_new.png"
+    # filename = "images/board1_srdewan.jpeg"
     bgr_image = cv2.imread(filename)
     preprocess = preprocess_image(bgr_image)
     corners = find_corners_of_board(preprocess)

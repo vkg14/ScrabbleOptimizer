@@ -289,6 +289,7 @@ class Solver:
             prefix = ""
             for c in range(self.board.n):
                 if not self.board[r][c].vacant():
+                    # If prefix is non-empty, left_of_anc = 0
                     prefix += self.board[r][c].value
                     left_of_anchor = 0
                     continue
@@ -300,6 +301,7 @@ class Solver:
                 # Found an anchor, run algorithm with built prefix
                 start_node = self.dict_trie.traverse_prefix(prefix)
                 if start_node:
+                    # We should NEVER error here since an existing prefix should be valid
                     self.left_part(prefix, start_node, tiles, left_of_anchor, (r, c))
                 # Since this anchor was both vacant and connected, prefix and left must be reset.
                 prefix = ""
