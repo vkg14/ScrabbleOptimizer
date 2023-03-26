@@ -147,6 +147,15 @@ class ScrabbleBoard:
         return self.board[idx]
 
 
+@dataclass
+class Solution:
+    score: int
+    coords: Tuple[int, int]
+    word: str
+    trans: bool
+    new_letters: int
+
+
 class Solver:
     def __init__(self, lexicon_file='lexicon/scrabble_word_list.pickle'):
         self.board = ScrabbleBoard()
@@ -211,7 +220,7 @@ class Solver:
         # At least one of the adjacent squares must have a letter to tether to
         return self.board[r][c].vacant() and any(not square.vacant() for square in adjacent_squares)
 
-    def score_word(self, word: str, coords: Tuple[int, int]) -> Tuple[int, Tuple[int, int], str, bool, int]:
+    def score_word(self, word: str, coords: Tuple[int, int]) -> Solution:
         r, c = coords
         score = 0
         cross_words_score = 0
@@ -236,7 +245,7 @@ class Solver:
         score += cross_words_score
         if new_letters == 7:
             score += 50
-        return score, coords, word, self.board.transposed, new_letters
+        return Solution(score, coords, word, self.board.transposed, new_letters)
 
     def extend_right(
             self,
@@ -244,7 +253,7 @@ class Solver:
             trie_node: TrieNode, tiles: List[str],
             coords: Tuple[int, int],
             anchor_placed: bool = True
-    ) -> List[Tuple[int, Tuple[int, int], str, bool, int]]:
+    ) -> List[Solution]:
         r, c = coords
         res = []
         if not self.board.in_bounds(r, c):
@@ -295,7 +304,7 @@ class Solver:
             tiles: List[str],
             limit: int,
             anchor: Tuple[int, int]
-    ) -> List[Tuple[int, Tuple[int, int], str, bool, int]]:
+    ) -> List[Solution]:
         # The left part is guaranteed to have no cross-checks, so we follow trie based on tiles
         res = []
         res.extend(self.extend_right(partial_word, trie_node, tiles, anchor, anchor_placed=False))
@@ -308,7 +317,7 @@ class Solver:
                 tiles.append(letter)
         return res
 
-    def _best_move_helper(self, tiles: List[str]) -> List[Tuple[int, Tuple[int, int], str, bool, int]]:
+    def _best_move_helper(self, tiles: List[str]) -> List[Solution]:
         # When in the middle of game, solve using anchors
         results = []
         for r in range(self.board.n):
@@ -362,15 +371,15 @@ class Solver:
         print(f"Found {len(results)} valid words during search.")
         self._find_best_result(results)
 
-    def _find_best_result(self, results):
+    def _find_best_result(self, results: List[Solution]):
         # Pick word that gives most points per letter placed
-        for score, coords, word, trans, new_letters in results:
-            avg_score = score / new_letters
+        for sol in results:
+            avg_score = sol.score / sol.new_letters
             if avg_score > self.score_per_letter:
-                self.best_word = word
-                self.best_score = score
-                self.start_coords = coords
-                self.used_transpose = trans
+                self.best_word = sol.word
+                self.best_score = sol.score
+                self.start_coords = sol.coords
+                self.used_transpose = sol.trans
                 self.score_per_letter = avg_score
         return
 
