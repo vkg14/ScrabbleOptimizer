@@ -1,4 +1,5 @@
 import functools
+import multiprocessing
 import pickle
 from dataclasses import dataclass, field
 from enum import auto
@@ -210,7 +211,7 @@ class Solver:
         # At least one of the adjacent squares must have a letter to tether to
         return self.board[r][c].vacant() and any(not square.vacant() for square in adjacent_squares)
 
-    def score_word(self, word: str, coords: Tuple[int, int]):
+    def score_word(self, word: str, coords: Tuple[int, int]) -> Tuple[int, Tuple[int, int], str, bool, int]:
         r, c = coords
         score = 0
         cross_words_score = 0
@@ -235,15 +236,7 @@ class Solver:
         score += cross_words_score
         if new_letters == 7:
             score += 50
-        # Pick word that gives most points per letter placed
-        avg_score = score / new_letters
-        if avg_score > self.score_per_letter:
-            self.best_word = word
-            self.best_score = score
-            self.start_coords = coords
-            self.used_transpose = self.board.transposed
-            self.score_per_letter = avg_score
-        return score
+        return score, coords, word, self.board.transposed, new_letters
 
     def extend_right(
             self,
@@ -251,19 +244,29 @@ class Solver:
             trie_node: TrieNode, tiles: List[str],
             coords: Tuple[int, int],
             anchor_placed: bool = True
-    ):
+    ) -> List[Tuple[int, Tuple[int, int], str, bool, int]]:
         r, c = coords
+        res = []
         if not self.board.in_bounds(r, c):
             # Since we are out of bounds, no further exploration can happen
             # Previously, we checked if we had no tiles here but we MUST continue until end of board or vacancy
             if trie_node.is_valid_word and anchor_placed:
-                self.score_word(partial_word, (r, c - len(partial_word)))
-            return
+                res.append(
+                    self.score_word(
+                        partial_word,
+                        (r, c - len(partial_word))
+                    )
+                )
+            return res
         square = self.board[r][c]
         if square.vacant():
             if trie_node.is_valid_word and anchor_placed:
-                self.score_word(partial_word, (r, c - len(partial_word)))
-                pass
+                res.append(
+                    self.score_word(
+                        partial_word,
+                        (r, c - len(partial_word))
+                    )
+                )
             for letter, child_node in trie_node.children.items():
                 # We always form words horizontally but change the orientation of the board repr beforehand.
                 cross_checks = square.cross_checks_vertical \
@@ -271,28 +274,43 @@ class Solver:
                 if letter not in tiles or letter not in cross_checks:
                     continue
                 tiles.remove(letter)
-                self.extend_right(partial_word + letter, child_node, tiles, (r, c + 1))
+                res.extend(
+                    self.extend_right(partial_word + letter, child_node, tiles, (r, c + 1))
+                )
                 tiles.append(letter)
         else:
             # square already occupied by letter
             letter = square.value
             if letter in trie_node.children:
                 child_node = trie_node.children[letter]
-                self.extend_right(partial_word + letter, child_node, tiles, (r, c + 1))
+                res.extend(
+                    self.extend_right(partial_word + letter, child_node, tiles, (r, c + 1))
+                )
+        return res
 
-    def left_part(self, partial_word: str, trie_node: TrieNode, tiles: List[str], limit: int, anchor: Tuple[int, int]):
-        # The left part is guaranteed to have no cross-checks so we follow trie based on tiles
-        self.extend_right(partial_word, trie_node, tiles, anchor, anchor_placed=False)
+    def left_part(
+            self,
+            partial_word: str,
+            trie_node: TrieNode,
+            tiles: List[str],
+            limit: int,
+            anchor: Tuple[int, int]
+    ) -> List[Tuple[int, Tuple[int, int], str, bool, int]]:
+        # The left part is guaranteed to have no cross-checks, so we follow trie based on tiles
+        res = []
+        res.extend(self.extend_right(partial_word, trie_node, tiles, anchor, anchor_placed=False))
         if limit > 0:
             for letter, child_node in trie_node.children.items():
                 if letter not in tiles:
                     continue
                 tiles.remove(letter)
-                self.left_part(partial_word + letter, child_node, tiles, limit - 1, anchor)
+                res.extend(self.left_part(partial_word + letter, child_node, tiles, limit - 1, anchor))
                 tiles.append(letter)
+        return res
 
-    def _best_move_helper(self, tiles: List[str]):
+    def _best_move_helper(self, tiles: List[str]) -> List[Tuple[int, Tuple[int, int], str, bool, int]]:
         # When in the middle of game, solve using anchors
+        results = []
         for r in range(self.board.n):
             # We solve the best for each row
             # We must keep track of the number of vacant / unconnected squares left of anchor
@@ -311,25 +329,50 @@ class Solver:
                     continue
                 # Found an anchor, run algorithm with built prefix
                 start_node = self.dict_trie.traverse_prefix(prefix)
+                # Start node should always exist since the prefix exists on the board.
                 if start_node:
-                    # We should NEVER error here since an existing prefix should be valid
-                    self.left_part(prefix, start_node, tiles, left_of_anchor, (r, c))
+                    results.extend(self.left_part(prefix, start_node, tiles, left_of_anchor, (r, c)))
                 # Since this anchor was both vacant and connected, prefix and left must be reset.
                 prefix = ""
                 left_of_anchor = 0
+        """
+        This actually does NOT help surprisingly... it was already fast to begin with and CPU-bound I guess?
+
+        args = []
+        args.append((prefix, start_node, tiles, left_of_anchor, (r, c)))
+        with multiprocessing.Pool(8) as pool:
+            for inner_results in pool.starmap(self.left_part, args):
+                self._find_best_result(inner_results)
+        """
+        return results
 
     def find_best_move(self, tiles: List[str]):
         self._clear_turn_state()
+        results = []
         if self.board[7][7].vacant():
             # start of game, apply best move horizontally since symmetric
-            self.left_part("", self.dict_trie, tiles, 6, (7, 7))
-            return
-        self._best_move_helper(tiles)
-        # Solve for vertically formed words using transpose
-        self.board.transpose()
-        self._best_move_helper(tiles)
-        # Undo transpose
-        self.board.transpose()
+            results.extend(self.left_part("", self.dict_trie, tiles, 6, (7, 7)))
+        else:
+            results.extend(self._best_move_helper(tiles))
+            # Solve for vertically formed words using transpose
+            self.board.transpose()
+            results.extend(self._best_move_helper(tiles))
+            # Undo transpose
+            self.board.transpose()
+        print(f"Found {len(results)} valid words during search.")
+        self._find_best_result(results)
+
+    def _find_best_result(self, results):
+        # Pick word that gives most points per letter placed
+        for score, coords, word, trans, new_letters in results:
+            avg_score = score / new_letters
+            if avg_score > self.score_per_letter:
+                self.best_word = word
+                self.best_score = score
+                self.start_coords = coords
+                self.used_transpose = trans
+                self.score_per_letter = avg_score
+        return
 
     def _clear_turn_state(self):
         self.best_score = 0
@@ -385,11 +428,8 @@ class Solver:
             return new_cross_check, 0
         # Compute valid candidates
         for candidate in list(new_cross_check):
-            if candidate not in prefix_node.children:
-                new_cross_check.remove(candidate)
-                continue
-            node = prefix_node.children[candidate]
-            for suffix_letter in suffix:
+            node = prefix_node
+            for suffix_letter in candidate + suffix:
                 if suffix_letter not in node.children:
                     node = None
                     break
@@ -414,14 +454,15 @@ class Solver:
         self.board[r][c].set_cross_checks_horizontal(h_check)
 
     def apply_best_move(self) -> List[str]:
+        assert not self.board.transposed, "This operation requires the board to not be transposed."
         res = []
         if not self.best_word or self.best_score <= 0:
             return res
         if self.used_transpose:
             self.board.transpose()
         r, c = self.start_coords
+        # The max size of all_candidates is 2 * num_letters_placed + 2 <= 16.
         all_candidates = []
-        # 2. Re-compute both H and V cross-checks for these candidates without the transpose-logic.
         for i, ch in enumerate(self.best_word):
             square = self.board[r][c + i]
             if not square.vacant():

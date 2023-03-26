@@ -28,15 +28,7 @@ def explore_error_case(filename: str):
     print(f'{s.best_word}, {s.best_score}')
 
 
-def sample_game():
-    bag = TileBag()
-    print(f'Starting with {bag.get_remaining_tiles()} tiles.')
-    rack1 = [bag.take_from_bag().get_letter() for _ in range(7)]
-    rack2 = [bag.take_from_bag().get_letter() for _ in range(7)]
-    print_racks(rack1, rack2)
-
-    # Construct trie and solver
-    construct_scrabble_lexicon()
+def play_game(bag, rack1, rack2):
     s = Solver()
 
     turns = 0
@@ -77,7 +69,21 @@ def sample_game():
         # If there are no more tiles in our rack, end the game.
         if not rack:
             break
+    return turns, score, s
 
+
+def sample_game():
+    bag = TileBag()
+    print(f'Starting with {bag.get_remaining_tiles()} tiles.')
+    rack1 = [bag.take_from_bag().get_letter() for _ in range(7)]
+    rack2 = [bag.take_from_bag().get_letter() for _ in range(7)]
+    print_racks(rack1, rack2)
+
+    # Construct trie and solver
+    construct_scrabble_lexicon()
+    turns, score, s = play_game(bag, rack1, rack2)
+
+    # Ensure all words are valid
     s.validate_board()
 
     print(f'Game finished in {turns} turns with total score of {score}.')
